@@ -20,6 +20,7 @@ from hydra.core.config_store import ConfigStore
 
 from cosmos_transfer2._src.imaginaire.lazy_config import LazyCall as L
 from cosmos_transfer2._src.predict2.datasets.local_datasets.dataset_video import get_generic_dataloader, get_sampler
+from cosmos_transfer2._src.transfer2.datasets.local_datasets.agibot_viewtransfer_dataset import AgibotViewTransferDataset
 from cosmos_transfer2._src.transfer2.datasets.local_datasets.singleview_dataset import SingleViewTransferDataset
 
 
@@ -126,6 +127,30 @@ def register_dataloader_local() -> None:
         node=L(get_generic_dataloader)(
             dataset=dataset_vis,
             sampler=L(get_sampler)(dataset=dataset_vis) if dist.is_initialized() else None,
+            batch_size=1,
+            drop_last=True,
+            num_workers=4,
+            pin_memory=True,
+        ),
+    )
+
+    dataset_agibot_viewtransfer = L(AgibotViewTransferDataset)(
+        dataset_dir="PLACEHOLDER_UPDATE_DATASET_PATH",  # Override this in your experiment config
+        num_frames=93,  # Match state_t=24: (24-1)*4+1=93
+        video_size=(704, 1280),
+        resolution="720",
+        hint_key="control_input_inpaint",
+        is_train=True,
+        caption_type="t2w_qwen2p5_7b",
+    )
+
+    cs.store(
+        group="data_train",
+        package="dataloader_train",
+        name="example_singleview_train_data_agibot_viewtransfer",
+        node=L(get_generic_dataloader)(
+            dataset=dataset_agibot_viewtransfer,
+            sampler=L(get_sampler)(dataset=dataset_agibot_viewtransfer) if dist.is_initialized() else None,
             batch_size=1,
             drop_last=True,
             num_workers=4,

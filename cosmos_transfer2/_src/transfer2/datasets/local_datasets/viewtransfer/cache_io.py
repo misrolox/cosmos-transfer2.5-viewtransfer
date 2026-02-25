@@ -59,7 +59,7 @@ def atomic_save_npz(path: str | Path, **arrays) -> None:
     os.replace(tmp, path)
 
 
-def write_video_atomic(*, path: str | Path, frames: Iterable[np.ndarray], fps: float) -> None:
+def write_video_atomic(*, path: str | Path, frames: Iterable[np.ndarray] | list[np.ndarray], fps: float) -> None:
     """Write frames to H264 mp4 via temp file + atomic rename."""
     path = Path(path)
     ensure_parent_dir(path)
@@ -75,7 +75,7 @@ def write_video_atomic(*, path: str | Path, frames: Iterable[np.ndarray], fps: f
 
 def write_video_h264_ffmpeg(
     *,
-    frames: Iterable[np.ndarray] | list[np.ndarray] | np.ndarray,
+    frames: Iterable[np.ndarray] | list[np.ndarray],
     fps: float,
     out_path: str | Path,
 ) -> None:

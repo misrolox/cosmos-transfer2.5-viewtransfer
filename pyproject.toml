@@ -46,6 +46,7 @@ dependencies = [
   "sam2>=1.1.0",
   "shapely>=2.0.5",
   "video-depth-anything @ git+https://github.com/jeanachoi/Video-Depth-Anything.git",
+  "moge",
 ]
 
 [project.optional-dependencies]
@@ -82,6 +83,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 cosmos-oss = [{ workspace = true }]
 video-depth-anything = { git = "https://github.com/jeanachoi/Video-Depth-Anything.git" }
+moge = { git = "https://github.com/microsoft/MoGe.git" }
 
 [tool.hatch.metadata]
 allow-direct-references = true

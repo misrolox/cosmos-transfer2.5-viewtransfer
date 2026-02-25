@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterable, Iterator
 
 import numpy as np
-from decord import VideoReader, cpu
+from torchcodec.decoders import VideoDecoder
 
 
 def ensure_parent_dir(path: str | Path) -> None:
@@ -214,9 +214,11 @@ def get_video_fps(path: str | Path) -> float:
         raise FileNotFoundError(f"Video not found: {path}")
 
     try:
-        vr = VideoReader(str(path), ctx=cpu(0), num_threads=1)
-        fps = float(vr.get_avg_fps())
-        del vr
+        decoder = VideoDecoder(str(path), device="cpu")
+        fps = decoder.metadata.average_fps
+        assert fps is not None, "Decord returned None for average_fps"
+        fps = float(fps)
+        del decoder
     except Exception as e:
         raise RuntimeError(f"Failed to obtain a valid FPS via decord for video: {path}") from e
 

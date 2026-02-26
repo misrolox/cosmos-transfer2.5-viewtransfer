@@ -6,8 +6,8 @@
 from cosmos_transfer2._src.transfer2.datasets.local_datasets.viewtransfer.path_templates import (
     CacheCategory,
     cache_episode_dir,
+    camera_parameters_cache_path,
     depth_cache_path,
-    extrinsics_cache_path,
     point_cloud_cache_path,
     raw_depth_pattern,
     raw_proprio_h5_path,
@@ -32,7 +32,7 @@ __all__ = [
     "raw_depth_pattern",
     "raw_proprio_h5_path",
     "depth_cache_path",
-    "extrinsics_cache_path",
+    "camera_parameters_cache_path",
     "point_cloud_cache_path",
     "render_cache_paths",
 ]

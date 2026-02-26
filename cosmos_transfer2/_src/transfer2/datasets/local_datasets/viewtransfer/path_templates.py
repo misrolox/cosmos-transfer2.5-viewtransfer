@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 """Path templates for Agibot view-transfer raw data and generated caches."""
 
 from enum import Enum
@@ -9,7 +6,7 @@ from pathlib import Path
 
 class CacheCategory(str, Enum):
     DEPTH = "depth"
-    EXTRINSICS = "extrinsics"
+    CAMERA_PARAMETERS = "camera"
     RENDER = "render"
     POINT_CLOUD = "pcd"
 
@@ -34,6 +31,10 @@ def raw_proprio_h5_path(raw_root: str | Path, task: str, episode: str) -> Path:
     return Path(raw_root) / "proprio_stats" / task / episode / "proprio_stats.h5"
 
 
+def raw_camera_info_json_path(raw_root: str | Path, task: str, episode: str) -> Path:
+    return Path(raw_root) / "parameters" / task / episode / "parameters" / "camera" / "rs_camera_info.json"
+
+
 def cache_episode_dir(cache_root: str | Path, category: CacheCategory, task: str, episode: str) -> Path:
     assert isinstance(category, CacheCategory), f"Expected CacheCategory, got {type(category)}"
     return Path(cache_root) / category.value / task / episode
@@ -54,8 +55,10 @@ def depth_cache_path(
     return cache_episode_dir(cache_root, CacheCategory.DEPTH, task, episode) / f"{source_clip}__depth{suffix}.mp4"
 
 
-def extrinsics_cache_path(cache_root: str | Path, task: str, episode: str, clip_name: str) -> Path:
-    return cache_episode_dir(cache_root, CacheCategory.EXTRINSICS, task, episode) / f"fk_{clip_name}_extrinsics.npz"
+def camera_parameters_cache_path(cache_root: str | Path, task: str, episode: str, clip_name: str) -> Path:
+    return (
+        cache_episode_dir(cache_root, CacheCategory.CAMERA_PARAMETERS, task, episode) / f"f{clip_name}_parameters.npz"
+    )
 
 
 def point_cloud_cache_path(

@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 """Indexing helpers for Agibot single-view view-transfer dataset."""
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ class ViewTransferPairSample:
     episode: str
     source_clip: str
     target_clip: str
-    
+
     def __str__(self) -> str:
         return f"[{self.task}/{self.episode}: {self.source_clip} -> {self.target_clip}]"
 

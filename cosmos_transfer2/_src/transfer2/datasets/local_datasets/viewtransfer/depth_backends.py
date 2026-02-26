@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
 """Depth cache generation backends for Agibot view-transfer."""
 
 from __future__ import annotations
@@ -59,13 +56,14 @@ def _generate_agibot_depth_cache(
     write_video_atomic(path=out_path, frames=depth_frames, fps=fps)
 
 
-def _generate_moge_depth_cache(
+def _generate_moge_cache(
     *,
     dataset_dir: str,
     out_path: Path,
     task: str,
     episode: str,
     source_clip: str,
+    moge_model: MoGeModel | None = None,
     moge_device: str,
     moge_batch_size: int,
 ) -> None:
@@ -80,6 +78,7 @@ def _generate_moge_depth_cache(
     output = _run_batch_moge_estimation(
         np.asarray(frames_rgb, dtype=np.uint8),
         batch_size=moge_batch_size,
+        model=moge_model,
         device=moge_device,
     )
     depth = output["depth"]
@@ -98,6 +97,7 @@ def ensure_depth_cache(
     depth_estimator: str,
     lock_timeout_sec: float,
     lock_poll_sec: float,
+    moge_model: MoGeModel | None = None,
     moge_device: str = "cuda",
     moge_batch_size: int = 8,
 ) -> Path:
@@ -130,12 +130,13 @@ def ensure_depth_cache(
                 source_clip=source_clip,
             )
         else:
-            _generate_moge_depth_cache(
+            _generate_moge_cache(
                 dataset_dir=dataset_dir,
                 out_path=out_path,
                 task=task,
                 episode=episode,
                 source_clip=source_clip,
+                moge_model=moge_model,
                 moge_device=moge_device,
                 moge_batch_size=moge_batch_size,
             )
@@ -172,6 +173,7 @@ def _run_batch_moge_estimation(rgb_np_uint8, batch_size=8, model=None, device="c
         - `points`: output tensor of shape (B, H, W, 3) or (H, W, 3).
         - `depth`: tensor of shape (B, H, W) or (H, W) containing the depth map.
         - `intrinsics`: tensor of shape (B, 3, 3) or (3, 3) containing the camera intrinsics.
+        - `masks`: tensor of shape (B, H, W) or (H, W) containing the valid depth and points mask.
     """
     assert rgb_np_uint8.shape[-1] == 3, "Input images must have 3 channels (RGB)"
     if rgb_np_uint8.ndim == 3:
@@ -189,6 +191,9 @@ def _run_batch_moge_estimation(rgb_np_uint8, batch_size=8, model=None, device="c
     outputs = []
     for batch_start in tqdm(range(0, len(input), batch_size), desc="Running MoGe estimation"):
         batch = input[batch_start : batch_start + batch_size]
-        outputs.append(model.infer(batch))
+        result: dict[str, torch.Tensor] = model.infer(batch)
+        # Offload from gpu
+        result = {k: v.cpu() for k, v in result.items()}
+        outputs.append(result)
 
     return {k: torch.cat([o[k] for o in outputs], dim=0) for k in outputs[0].keys()}

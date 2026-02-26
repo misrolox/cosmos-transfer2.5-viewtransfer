@@ -1,26 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-"""FK-based camera extrinsics cache generation for Agibot view-transfer."""
+"""FK-based camera extrinsics for Agibot dataset."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections import defaultdict
 
 import h5py
 import numpy as np
 import pinocchio as pin
 from pxr import Usd, UsdGeom
 from scipy.spatial.transform import Rotation as R
-from tqdm import tqdm
 
-from cosmos_transfer2._src.transfer2.datasets.local_datasets.viewtransfer.cache_io import atomic_save_npz, file_lock
-from cosmos_transfer2._src.transfer2.datasets.local_datasets.viewtransfer.path_templates import (
-    CacheCategory,
-    cache_episode_dir,
-    extrinsics_cache_path,
-    raw_proprio_h5_path,
-)
+from cosmos_transfer2._src.transfer2.datasets.local_datasets.viewtransfer.path_templates import raw_proprio_h5_path
 
 DEFAULT_CAMERA_PRIMS: dict[str, str] = {
     "head": "/G1/head_link2/Head_Camera",
@@ -29,45 +19,45 @@ DEFAULT_CAMERA_PRIMS: dict[str, str] = {
 }
 
 
-def ensure_extrinsics_cache(
+def generate_fk_extrinsics_for_episode(
     *,
     dataset_dir: str,
-    cache_root: str,
     task: str,
     episode: str,
-    clip_name: str,
     clip_names: tuple[str, ...],
     urdf_path: str,
     usd_path: str | None,
     camera_prims: dict[str, str] | None,
     base_frame: str,
-    lock_timeout_sec: float,
-    lock_poll_sec: float,
-) -> Path:
-    """Ensure per-clip FK extrinsics cache exists and return clip cache path."""
-    out_path = extrinsics_cache_path(cache_root, task, episode, clip_name)
-    if out_path.exists():
-        return out_path
+) -> dict[str, np.ndarray]:
+    if not urdf_path:
+        raise ValueError("urdf_path must be provided to generate FK extrinsics.")
 
-    episode_extrinsics_dir = cache_episode_dir(cache_root, CacheCategory.EXTRINSICS, task, episode)
-    lock_path = episode_extrinsics_dir / "fk_generation.lock"
-    with file_lock(lock_path, timeout_sec=lock_timeout_sec, poll_sec=lock_poll_sec):
-        if out_path.exists():
-            return out_path
-        _generate_fk_extrinsics_for_episode(
-            dataset_dir=dataset_dir,
-            cache_root=cache_root,
-            task=task,
-            episode=episode,
-            clip_names=clip_names,
-            urdf_path=urdf_path,
-            usd_path=usd_path,
-            camera_prims=camera_prims,
-            base_frame=base_frame,
+    h5_path = raw_proprio_h5_path(dataset_dir, task, episode)
+    if not h5_path.exists():
+        raise FileNotFoundError(f"FK input h5 not found: {h5_path}")
+
+    if not camera_prims:
+        camera_prims = DEFAULT_CAMERA_PRIMS
+
+    missing = [clip for clip in clip_names if clip not in camera_prims]
+    if missing:
+        raise ValueError(
+            f"Missing camera prim mappings for clips={missing}. Provide camera_prims for all clip_names={clip_names}."
         )
-    if not out_path.exists():
-        raise RuntimeError(f"FK extrinsics generation did not create expected cache: {out_path}")
-    return out_path
+
+    generator = CameraExtrinsics(
+        h5_path=str(h5_path),
+        urdf_path=urdf_path,
+        usd_path=usd_path,
+        camera_prims={clip: camera_prims[clip] for clip in clip_names},
+        base_frame=base_frame,
+    )
+    all_extrinsics: dict[str, list[np.ndarray]] = generator.generate_camera_extrinsics()
+    if not all_extrinsics:
+        raise RuntimeError(f"Generated empty extrinsics list for task={task} episode={episode}")
+
+    return {k: np.stack(v, axis=0) for k, v in all_extrinsics.items()}
 
 
 class FKFromH5:
@@ -365,59 +355,9 @@ class CameraExtrinsics:
             results[camera_name] = self.get_H_base_cam(camera_prim_path, idx=index)
         return results
 
-    def generate_camera_extrinsics(self) -> list[dict[str, np.ndarray]]:
-        results: list[dict[str, np.ndarray]] = []
-        for idx in tqdm(range(self.fk.N), desc="Generating camera extrinsics"):
-            results.append(self.get_H_base_cams(index=idx))
+    def generate_camera_extrinsics(self) -> dict[str, list[np.ndarray]]:
+        results: dict[str, list[np.ndarray]] = defaultdict(list)
+        for camera_name, camera_prim_path in self.camera_prims.items():
+            for idx in range(self.fk.N):
+                results[camera_name].append(self.get_H_base_cam(camera_prim_path, idx=idx))
         return results
-
-
-def _generate_fk_extrinsics_for_episode(
-    *,
-    dataset_dir: str,
-    cache_root: str,
-    task: str,
-    episode: str,
-    clip_names: tuple[str, ...],
-    urdf_path: str,
-    usd_path: str | None,
-    camera_prims: dict[str, str] | None,
-    base_frame: str,
-) -> None:
-    if not urdf_path:
-        raise ValueError("urdf_path must be provided to generate FK extrinsics.")
-
-    h5_path = raw_proprio_h5_path(dataset_dir, task, episode)
-    if not h5_path.exists():
-        raise FileNotFoundError(f"FK input h5 not found: {h5_path}")
-
-    if not camera_prims:
-        camera_prims = DEFAULT_CAMERA_PRIMS
-
-    missing = [clip for clip in clip_names if clip not in camera_prims]
-    if missing:
-        raise ValueError(
-            f"Missing camera prim mappings for clips={missing}. Provide camera_prims for all clip_names={clip_names}."
-        )
-
-    generator = CameraExtrinsics(
-        h5_path=str(h5_path),
-        urdf_path=urdf_path,
-        usd_path=usd_path,
-        camera_prims={clip: camera_prims[clip] for clip in clip_names},
-        base_frame=base_frame,
-    )
-    all_extrinsics = generator.generate_camera_extrinsics()
-    if not all_extrinsics:
-        raise RuntimeError(f"Generated empty extrinsics list for task={task} episode={episode}")
-
-    for clip in clip_names:
-        per_clip = []
-        for frame_extrinsics in all_extrinsics:
-            if clip not in frame_extrinsics:
-                raise KeyError(f"Clip {clip!r} missing from generated extrinsics for task={task} episode={episode}.")
-            per_clip.append(np.asarray(frame_extrinsics[clip], dtype=np.float32))
-
-        extrinsics = np.stack(per_clip, axis=0)
-        out_path = extrinsics_cache_path(cache_root, task, episode, clip)
-        atomic_save_npz(out_path, extrinsics=extrinsics)

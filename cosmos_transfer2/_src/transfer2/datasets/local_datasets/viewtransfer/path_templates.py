@@ -52,7 +52,7 @@ def depth_cache_path(
     depth_estimator: str,
 ) -> Path:
     suffix = _depth_suffix(depth_estimator)
-    return cache_episode_dir(cache_root, CacheCategory.DEPTH, task, episode) / f"{source_clip}__depth{suffix}.mp4"
+    return cache_episode_dir(cache_root, CacheCategory.DEPTH, task, episode) / f"{source_clip}__depth{suffix}.mkv"
 
 
 def camera_parameters_cache_path(cache_root: str | Path, task: str, episode: str, clip_name: str) -> Path:
@@ -86,5 +86,5 @@ def render_cache_paths(
     suffix = _depth_suffix(depth_estimator)
     render_dir = cache_episode_dir(cache_root, CacheCategory.RENDER, task, episode)
     render_path = render_dir / f"{source_clip}__to__{target_clip}{suffix}.mp4"
-    mask_path = render_dir / f"{source_clip}__to__{target_clip}__mask{suffix}.mp4"
+    mask_path = render_dir / f"{source_clip}__to__{target_clip}__mask{suffix}.mkv"
     return render_path, mask_path

@@ -51,6 +51,7 @@ dependencies = [
   "pin>=2.7.0",
   "usd-core>=25.2.post1",
   "torchcodec>=0.10.0",
+  "warp-lang==1.7.2",
 ]
 
 [project.optional-dependencies]

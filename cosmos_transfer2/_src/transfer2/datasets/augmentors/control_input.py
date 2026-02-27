@@ -534,12 +534,57 @@ class AddControlInputHdmapBbox(Augmentor):
         return data_dict
 
 
+class AddControlInputSoftInpaint(Augmentor):
+    """
+    Minimal soft inpaint control input.
+
+    Requires:
+        data_dict[input_keys[0]]   -> rendered conditioning tensor (C, T, H, W)
+
+    Produces:
+        data_dict["control_input_soft_inpaint"]
+    """
+
+    def __init__(
+        self,
+        input_keys: list,
+        output_keys: list | None = None,
+    ) -> None:
+        super().__init__(input_keys, output_keys)
+
+    def __call__(self, data_dict: dict) -> dict:
+        if not self.output_keys:
+            self.output_keys = ["control_input_soft_inpaint"]
+
+        # Can be extended to combine multiple inputs.
+        key_in = self.input_keys[0]
+        mask_key = key_in + "_mask"
+        assert key_in in data_dict, f"Expected key {key_in} in data_dict, but not found."
+        assert mask_key in data_dict, f"Expected mask key {mask_key} in data_dict, but not found."
+
+        # Get the soft inpaint condition, can be augmented in the future.
+        soft_inpaint_condition = data_dict[key_in]
+        assert isinstance(soft_inpaint_condition, torch.Tensor), (
+            f"Expected tensor for {key_in}, got {type(soft_inpaint_condition)}"
+        )
+        assert soft_inpaint_condition.ndim == 4, f"Expected 4D tensor for {key_in}, got {soft_inpaint_condition.ndim}D"
+
+        # Output
+        key_out = self.output_keys[0]
+        mask_key_out = key_out + "_mask"
+        data_dict[key_out] = soft_inpaint_condition
+        data_dict[mask_key_out] = data_dict[mask_key]
+
+        return data_dict
+
+
 CTRL_HINT_KEYS = {
     "control_input_edge": AddControlInputEdge,
     "control_input_vis": AddControlInputBlur,
     "control_input_depth": AddControlInputDepth,
     "control_input_seg": AddControlInputSeg,
     "control_input_inpaint": AddControlInputIdentity,
+    "control_input_soft_inpaint": AddControlInputSoftInpaint,
     "control_input_hdmap_bbox": AddControlInputHdmapBbox,
 }
 

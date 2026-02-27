@@ -255,6 +255,43 @@ def get_video_augmentor_v2(
     }
 
 
+@augmentor_register("view_transfer_video_augmentor")
+def get_view_transfer_video_augmentor(
+    source_video_key: str, target_video_key: str, inpaint_video_key: str, resolution: str
+):
+    """Video augmentor for view-transfer.
+    Augmentors include: Resizing and Padding.
+
+    Data Dict is expected to contain:
+    {
+        source_video_key: the original video from one view
+        target_video_key: the original video from target view
+        inpaint_video_key: the rendered video from a different view
+        inpaint_mask_key: the mask for the inpainted video, 1 for known pixels and 0 for unknown pixels
+        aspect_ratio: aspect ratio of the video, used by the augmentors to determine the target augmentation size
+    }
+    """
+    inpaint_mask_key = inpaint_video_key + "_mask"
+    augmentor_dict = {
+        "resize_largest_side_aspect_ratio_preserving": L(resize.ResizeLargestSideAspectPreserving)(
+            input_keys=[source_video_key, target_video_key, inpaint_video_key, inpaint_mask_key],
+            args={"size": VIDEO_RES_SIZE_INFO[resolution]},
+        ),
+        "reflection_padding": L(padding.ReflectionPadding)(
+            input_keys=[source_video_key, target_video_key],
+            args={"size": VIDEO_RES_SIZE_INFO[resolution]},
+        ),
+        "constant_padding": L(padding.ConstantPadding)(
+            input_keys=[inpaint_video_key, inpaint_mask_key],
+            args={"size": VIDEO_RES_SIZE_INFO[resolution], "fill": 0},
+        ),
+        "add_control_input": L(control_input.AddControlInputSoftInpaint)(
+            input_keys=[inpaint_video_key],
+        ),
+    }
+    return augmentor_dict
+
+
 @augmentor_register("image_basic_augmentor")
 def get_image_augmentor(
     resolution: str,

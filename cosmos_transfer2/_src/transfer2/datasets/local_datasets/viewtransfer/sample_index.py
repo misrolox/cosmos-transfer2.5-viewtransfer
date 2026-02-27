@@ -31,7 +31,7 @@ class ViewTransferPairSample:
     target_clip: str
 
     def __str__(self) -> str:
-        return f"[{self.task}/{self.episode}: {self.source_clip} -> {self.target_clip}]"
+        return f"{self.task}_{self.episode}_{self.source_clip}_to_{self.target_clip}"
 
 
 def build_clip_pairs(

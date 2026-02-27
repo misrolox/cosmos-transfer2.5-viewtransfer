@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Agibot single-view dataset for inpaint-based view-transfer post-training."""
+"""Agibot single-view dataset for view-transfer post-training."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ import torch
 from torch.utils.data import Dataset
 from torchcodec import FrameBatch
 from torchcodec.decoders import VideoDecoder
+from moge.model.v2 import MoGeModel
 
 from cosmos_transfer2._src.imaginaire.lazy_config import instantiate
 from cosmos_transfer2._src.imaginaire.utils import log
-from cosmos_transfer2._src.transfer2.datasets.augmentor_provider import get_video_augmentor_v2_with_control
+from cosmos_transfer2._src.transfer2.datasets.augmentor_provider import get_view_transfer_video_augmentor
 from cosmos_transfer2._src.transfer2.datasets.local_datasets.viewtransfer.cache_io import (
     get_video_fps,
     load_depth_mkv_ffv1_mm_u16,
@@ -67,7 +68,7 @@ class MockUrl:
 
 
 class AgibotViewTransferDataset(Dataset):
-    """Local dataset with cache-first view-transfer conditioning for inpaint control."""
+    """Agibot dataset with cache-first view-transfer conditioning."""
 
     def __init__(
         self,
@@ -75,7 +76,6 @@ class AgibotViewTransferDataset(Dataset):
         num_frames: int,
         video_size: tuple[int, int],
         resolution: str = "720",
-        hint_key: str = "control_input_inpaint",
         is_train: bool = True,
         caption_type: str = "t2w_qwen2p5_7b",
         cache_root: str = ".agibot_cache",
@@ -86,7 +86,7 @@ class AgibotViewTransferDataset(Dataset):
         anchor_direction: str | AnchorDirection | None = "source_to_others",
         explicit_pairs: tuple[tuple[str, str], ...] | None = None,
         urdf_path: str = "",
-        usd_path: str | None = None,
+        usd_path: str = "",
         camera_prims: dict[str, str] | None = None,
         base_frame: str = "base_link",
         decoder_device: str = "cpu",
@@ -98,17 +98,11 @@ class AgibotViewTransferDataset(Dataset):
     ) -> None:
         super().__init__()
         del kwargs
-        if hint_key != "control_input_inpaint":
-            raise ValueError(
-                f"AgibotViewTransferDataset currently supports only hint_key='control_input_inpaint', got {hint_key!r}"
-            )
 
         self.dataset_dir = dataset_dir
         self.sequence_length = int(num_frames)
         self.video_size = tuple(video_size)
         self.resolution = resolution
-        self.hint_key = hint_key
-        self.ctrl_type = hint_key.replace("control_input_", "")
         self.is_train = is_train
         self.caption_type = caption_type
 
@@ -146,33 +140,26 @@ class AgibotViewTransferDataset(Dataset):
                 "AgibotViewTransferDataset found no samples after scanning dataset root. "
                 f"dataset_dir={dataset_dir}, clip_names={self.clip_names}, pair_mode={self.pair_mode}"
             )
+            
+        # If moge depth estimation is chosen, load model here once:
+        self.moge_model = None
+        if self.depth_estimator == "moge":
+            self.moge_model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl").to(self.moge_device)
 
         self.num_failed = 0
         self.bad_sample_indices = set()  # Track samples that fail
 
         # Use proper augmentor pipeline for training quality
-        # This includes randomized edge detection, reflection padding, and text transforms
-        # Pass embedding_type=None since we're handling T5 embeddings ourselves
-        # (if embedding_type is set, the function returns early with only video_parsing)
-        augmentor_config = get_video_augmentor_v2_with_control(
+        self.source_video_key = "source_video"
+        self.target_video_key = "target_video"
+        self.inpaint_video_key = "rendered_video"
+        self.inpaint_mask_key = "rendered_video_mask"
+        augmentor_config = get_view_transfer_video_augmentor(
+            source_video_key=self.source_video_key,
+            target_video_key=self.target_video_key,
+            inpaint_video_key=self.inpaint_video_key,
             resolution=resolution,
-            caption_type=caption_type,
-            embedding_type=None,  # We handle embeddings ourselves, get full augmentor pipeline
-            control_input_type=self.ctrl_type,
-            use_random=is_train,  # Enable random augmentations for training
         )
-
-        # Filter out augmentors that don't apply to local datasets
-        # The augmentor pipeline includes augmentors designed for S3/WebDataset that need to be skipped:
-        # - video_parsing: Decodes video bytes from S3 → we already load tensors from local MP4 files
-        # - depth_parsing: Decodes depth bytes from S3 key "depth_pervideo_video_depth_anything" → we load from local depth/ folder
-        # - seg_parsing: Decodes seg bytes from S3 key "segmentation_sam2_color_video_v2" → we load from local seg/ folder
-        # - merge_datadict: Merges multiple WebDataset shards → not needed for single local dataset
-        # - text_transform: Loads pre-computed T5 embeddings → we pass raw captions for on-the-fly encoding
-        skip_augmentors = ["video_parsing", "merge_datadict", "text_transform", "depth_parsing", "seg_parsing"]
-        augmentor_config = {k: v for k, v in augmentor_config.items() if k not in skip_augmentors}
-
-        log.info(f"Filtered augmentors: {list(augmentor_config.keys())}")
 
         # Instantiate augmentors
         self.augmentor = {k: instantiate(v) for k, v in augmentor_config.items()}
@@ -183,7 +170,6 @@ class AgibotViewTransferDataset(Dataset):
 
         log.info(f"Initialized AgibotViewTransferDataset with {len(self.samples)} videos")
         log.info(f"  Dataset dir: {self.dataset_dir}")
-        log.info(f"  Control type: {self.ctrl_type}")
         log.info(f"  Resolution: {resolution}, Video size: {video_size}")
         log.info(f"  Required frames: {self.sequence_length}")
 
@@ -266,10 +252,10 @@ class AgibotViewTransferDataset(Dataset):
 
                 # Build data dictionary
                 data = {
-                    "video": target_video,
-                    "source_video": source_video,
-                    "inpaint": control,
-                    "inpaint_mask": mask,
+                    self.source_video_key: source_video,
+                    self.target_video_key: target_video,
+                    self.inpaint_video_key: control,
+                    self.inpaint_mask_key: mask,
                     "aspect_ratio": aspect_ratio,
                     "fps": fps,
                     "frame_start": frame_ids[0],
@@ -284,37 +270,13 @@ class AgibotViewTransferDataset(Dataset):
                 caption = "a robot video"
                 data[self.caption_type] = caption
 
-                # Create metadata structure for augmentor compatibility
-                # The augmentor expects "metas" with window information
-                # Map caption_type to the expected caption key in window_data
-                if self.caption_type == "t2w_qwen2p5_7b":
-                    caption_key_in_window = "qwen2p5_7b_caption"
-                else:
-                    caption_key_in_window = self.caption_type
-
-                window_data = {
-                    "start_frame": frame_ids[0],
-                    "end_frame": frame_ids[-1] + 1,
-                    caption_key_in_window: caption,
-                }
-                data["metas"] = {
-                    "framerate": fps,
-                    "nb_frames": len(frame_ids),
-                    # Create a single window spanning the entire video segment
-                    # Include both windows and t2w_windows for different caption types
-                    "windows": [window_data],
-                    "t2w_windows": [window_data],
-                    "i2w_windows_later_frames": [window_data],
-                }
-
                 # Pass raw caption for on-the-fly encoding by model's text encoder
-                # (Like multiview dataset - model will encode with Qwen/reason1 encoder)
                 data["ai_caption"] = caption
 
                 # Add URL and key for logging (used by augmentors and training)
                 # Use MockUrl object for augmentor compatibility (augmentors expect __url__.meta.opts)
                 data["__url__"] = MockUrl(str(self.dataset_dir))
-                data["__key__"] = f"Agibot_{sample.task}_{sample.episode}_{sample.source_clip}_to_{sample.target_clip}"
+                data["__key__"] = f"Agibot_{sample}"
 
                 # Apply augmentation pipeline
                 # This includes: resizing, padding, and control input generation
@@ -331,33 +293,26 @@ class AgibotViewTransferDataset(Dataset):
                     data["__url__"] = str(data["__url__"])
 
                 # Add final metadata (after augmentation)
-                c, t, h, w = data["video"].shape
+                c, t, h, w = data[self.target_video_key].shape
                 if "image_size" not in data:
                     data["image_size"] = torch.tensor([h, w, h, w])
                 if "padding_mask" not in data:
                     data["padding_mask"] = torch.ones(1, h, w)  # All valid (no padding)
 
                 # Validate output format after augmentation
-                assert data["video"].dtype == torch.uint8, f"Video dtype is {data['video'].dtype}, expected uint8"
-                assert data["video"].shape[0] == 3, f"Video should have 3 channels, got {data['video'].shape[0]}"
-                assert data["video"].shape[1] == self.sequence_length, (
-                    f"Video should have {self.sequence_length} frames, got {data['video'].shape[1]}"
-                )
-
-                # Check control input exists and has correct format
-                ctrl_key = f"control_input_{self.ctrl_type}"
-                assert ctrl_key in data, f"Control input key '{ctrl_key}' not found in data"
-                assert data[ctrl_key].dtype == torch.uint8, (
-                    f"Control input dtype is {data[ctrl_key].dtype}, expected uint8"
-                )
-                assert data[ctrl_key].shape == data["video"].shape, (
-                    f"Control input shape {data[ctrl_key].shape} doesn't match video shape {data['video'].shape}"
-                )
-
-                log.debug(
-                    f"Dataset sample ready: video={data['video'].shape} {data['video'].dtype}, "
-                    f"{ctrl_key}={data[ctrl_key].shape} {data[ctrl_key].dtype}, "
-                )
+                for key in [
+                    self.source_video_key,
+                    self.target_video_key,
+                    self.inpaint_video_key,
+                    self.inpaint_mask_key,
+                ]:
+                    assert key in data, f"Augmentor output missing expected key: {key}"
+                    assert isinstance(data[key], torch.Tensor), f"Expected tensor for {key}, got {type(data[key])}"
+                    assert data[key].dtype == torch.uint8, f"Expected uint8 dtype for {key}, got {data[key].dtype}"
+                    assert data[key].ndim == 4, f"Expected 4D tensor for {key}, got {data[key].ndim}D"
+                    assert data[key].shape[1] == self.sequence_length, (
+                        f"Expected {self.sequence_length} frames for {key}, got {data[key].shape[1]}"
+                    )
 
                 return data
 
@@ -428,6 +383,7 @@ class AgibotViewTransferDataset(Dataset):
             episode=sample.episode,
             source_clip=sample.source_clip,
             depth_estimator=self.depth_estimator,
+            moge_model=self.moge_model,
             moge_device=self.moge_device,
             moge_batch_size=self.moge_batch_size,
             lock_timeout_sec=self.lock_timeout_sec,

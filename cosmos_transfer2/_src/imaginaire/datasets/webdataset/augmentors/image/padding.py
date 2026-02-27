@@ -80,3 +80,76 @@ class ReflectionPadding(Augmentor):
         data_dict["image_size"] = torch.tensor([target_h, target_w, orig_h, orig_w], dtype=torch.float)
 
         return data_dict
+
+
+class ConstantPadding(Augmentor):
+    def __init__(
+        self,
+        input_keys: list,
+        output_keys: Optional[list] = None,
+        args: Optional[dict] = None,
+    ) -> None:
+        super().__init__(input_keys, output_keys, args)
+
+    def __call__(self, data_dict: dict) -> dict:
+        r"""Performs constant padding with configurable fill value.
+        Also returns a padding mask.
+
+        Required args:
+            size: (target_w, target_h)
+            fill: constant value for padding
+        """
+
+        assert self.args is not None, "Please specify args in augmentation"
+
+        if self.output_keys is None:
+            self.output_keys = self.input_keys
+
+        # Obtain image and augmentation sizes
+        orig_w, orig_h = obtain_image_size(data_dict, self.input_keys)
+        target_size = obtain_augmentation_size(data_dict, self.args)
+
+        assert isinstance(target_size, (tuple, omegaconf.listconfig.ListConfig)), "Please specify target size as tuple"
+
+        target_w, target_h = target_size
+        target_w = int(target_w)
+        target_h = int(target_h)
+
+        # Fill value from args (default to black if not provided)
+        fill = getattr(self.args, "fill", 0)
+
+        # Ensure target is not smaller than original
+        assert target_w >= orig_w and target_h >= orig_h, (
+            f"Target size {(target_w, target_h)} must be >= original size {(orig_w, orig_h)}"
+        )
+
+        # Calculate symmetric padding
+        padding_left = int((target_w - orig_w) / 2)
+        padding_right = target_w - orig_w - padding_left
+        padding_top = int((target_h - orig_h) / 2)
+        padding_bottom = target_h - orig_h - padding_top
+        padding_vals = [padding_left, padding_top, padding_right, padding_bottom]
+
+        for inp_key, out_key in zip(self.input_keys, self.output_keys):
+            data_dict[out_key] = transforms_F.pad(
+                data_dict[inp_key],
+                padding_vals,
+                padding_mode="constant",
+                fill=fill,
+            )
+
+            if out_key != inp_key:
+                del data_dict[inp_key]
+
+        # Padding mask: 1 = padded region, 0 = original pixels
+        padding_mask = torch.ones((1, target_h, target_w))
+        padding_mask[
+            :,
+            padding_top : (padding_top + orig_h),
+            padding_left : (padding_left + orig_w),
+        ] = 0
+
+        data_dict["padding_mask"] = padding_mask
+        data_dict["image_size"] = torch.tensor([target_h, target_w, orig_h, orig_w], dtype=torch.float)
+
+        return data_dict
